@@ -32,7 +32,7 @@ LOG_FILE="/var/log/awg-bot-install.log"
 INSTALL_STEP=0
 TOTAL_STEPS=14
 
-AWG_REPO="https://github.com/amnezia-vpn/amneziawg-linux.git"
+AWG_REPO="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git"
 BOT_REPO="https://github.com/JB-SelfCompany/AWG_Bot.git"
 BOT_DIR="/opt/awg-bot"
 AWG_CONF_DIR="/etc/amnezia/amneziawg"
@@ -217,10 +217,6 @@ install_dependencies() {
 
     step_header "Установка системных зависимостей"
     local pkgs=(
-        build-essential
-        libssl-dev
-        libelf-dev
-        pkg-config
         curl
         wget
         git
@@ -228,8 +224,6 @@ install_dependencies() {
         python3-pip
         python3-venv
         iptables
-        wireguard-tools
-        linux-headers-"$(uname -r)"
     )
     info_msg "Пакеты: ${pkgs[*]}"
     info_msg "Это может занять 10-20 минут..."
@@ -281,52 +275,47 @@ SH
 install_amneziawg() {
     section_header "[VPN] УСТАНОВКА AMNEZIAWG"
 
-    local build_dir="/tmp/amneziawg-linux-build"
-
-    step_header "Клонирование репозитория AmneziaWG"
-    if [ -d "$build_dir" ]; then
-        info_msg "Директория уже существует - обновляем"
-        git -C "$build_dir" pull --ff-only >> "$LOG_FILE" 2>&1 || true
+    step_header "Установка зависимостей для PPA"
+    if ! timeout 300 apt-get install -y --no-install-recommends \
+        software-properties-common python3-launchpadlib gnupg2 \
+        "linux-headers-$(uname -r)" >> "$LOG_FILE" 2>&1; then
+        warning_msg "Часть зависимостей не установлена (продолжаем)"
     else
-        info_msg "Клонируется $AWG_REPO ..."
-        timeout 300 git clone --depth=1 "$AWG_REPO" "$build_dir" >> "$LOG_FILE" 2>&1 \
-            || die "Не удалось клонировать репозиторий AmneziaWG"
-    fi
-    success_msg "Репозиторий получен"
-
-    step_header "Компиляция AmneziaWG"
-    info_msg "make -j$(nproc) - займёт 5-20 минут, ожидайте..."
-    cd "$build_dir"
-
-    # Показываем точки прогресса пока идёт сборка
-    (while kill -0 $$ 2>/dev/null; do printf '.'; sleep 15; done) &
-    local dot_pid=$!
-
-    if timeout 1800 make -j"$(nproc)" >> "$LOG_FILE" 2>&1; then
-        kill "$dot_pid" 2>/dev/null; echo ""
-        success_msg "Компиляция завершена"
-    else
-        kill "$dot_pid" 2>/dev/null; echo ""
-        die "Ошибка компиляции - подробности в $LOG_FILE"
+        success_msg "Зависимости установлены"
     fi
 
-    step_header "Установка модуля ядра"
-    timeout 300 make install >> "$LOG_FILE" 2>&1 \
-        || die "Ошибка установки модуля ядра"
-    success_msg "Модуль установлен"
-
-    if modprobe amnezia >> "$LOG_FILE" 2>&1; then
-        success_msg "Модуль amnezia загружен"
-        # Автозагрузка при старте
-        echo "amnezia" > /etc/modules-load.d/amneziawg.conf
+    step_header "Добавление PPA amnezia/ppa"
+    info_msg "Добавляется репозиторий ppa:amnezia/ppa ..."
+    if timeout 120 add-apt-repository -y ppa:amnezia/ppa >> "$LOG_FILE" 2>&1; then
+        success_msg "PPA добавлен"
     else
-        warning_msg "modprobe amnezia не удался - может потребоваться перезагрузка"
+        die "Не удалось добавить PPA amnezia/ppa"
     fi
 
-    # Создаём шимы только если нативные бинари не появились после сборки
+    step_header "Обновление списков пакетов"
+    if ! timeout 120 apt-get update -qq >> "$LOG_FILE" 2>&1; then
+        warning_msg "apt-get update завершился с ошибками - продолжаем"
+    else
+        success_msg "Списки пакетов обновлены"
+    fi
+
+    step_header "Установка пакета amneziawg"
+    info_msg "Устанавливается amneziawg (займёт 1-3 минуты)..."
+    if timeout 600 apt-get install -y amneziawg >> "$LOG_FILE" 2>&1; then
+        success_msg "AmneziaWG установлен"
+    else
+        die "Не удалось установить amneziawg - подробности в $LOG_FILE"
+    fi
+
+    step_header "Загрузка модуля ядра"
+    if modprobe amneziawg >> "$LOG_FILE" 2>&1; then
+        success_msg "Модуль amneziawg загружен"
+        echo "amneziawg" > /etc/modules-load.d/amneziawg.conf
+    else
+        warning_msg "modprobe amneziawg не удался - может потребоваться перезагрузка"
+    fi
+
     ensure_awg_compatibility
-
-    cd /
     echo ""
 }
 
