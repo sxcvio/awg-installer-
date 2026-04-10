@@ -2,7 +2,7 @@
 
 ################################################################################
 #   AWG Bot 2.0 + AmneziaWG Auto-Installer v3.0
-#   MIT License | Авторы: svod011929  UPD SXCVIO
+#   MIT License | Авторы: svod011929 UPD SXCVIO
 ################################################################################
 
 # Принудительно UTF-8 локаль
@@ -33,7 +33,7 @@ INSTALL_STEP=0
 TOTAL_STEPS=14
 
 AWG_REPO="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git"
-BOT_REPO="https://github.com/JB-SelfCompany/AWG_Bot.git"
+BOT_REPO="https://github.com/JB-SelfCompany/AWG_Bot2.0.git"
 BOT_DIR="/opt/awg-bot"
 AWG_CONF_DIR="/etc/amnezia/amneziawg"
 AWG_IFACE="awg0"
@@ -402,75 +402,110 @@ EOF
     echo ""
 }
 
-# ── Установка AWG Bot ─────────────────────────────────────────────────────────
+# ── Установка AWG Bot 2.0 ─────────────────────────────────────────────────────
 install_awg_bot() {
     section_header "[BOT] УСТАНОВКА AWG BOT 2.0"
 
-    step_header "Создание пользователя awgbot"
-    if ! id -u awgbot &>/dev/null; then
-        useradd -r -s /bin/false -d "$BOT_DIR" -m awgbot
-        success_msg "Пользователь awgbot создан"
+    step_header "Установка Python 3.12"
+    # AWG_Bot2.0 требует Python 3.12+
+    local python_bin
+    if command -v python3.12 &>/dev/null; then
+        python_bin="python3.12"
+        success_msg "Python 3.12 уже установлен"
     else
-        info_msg "Пользователь awgbot уже существует"
+        info_msg "Добавляем PPA deadsnakes для Python 3.12..."
+        add-apt-repository -y ppa:deadsnakes/ppa >> "$LOG_FILE" 2>&1 || true
+        apt-get update -qq >> "$LOG_FILE" 2>&1
+        if timeout 300 apt-get install -y python3.12 python3.12-venv python3.12-dev >> "$LOG_FILE" 2>&1; then
+            python_bin="python3.12"
+            success_msg "Python 3.12 установлен"
+        else
+            python_bin="python3"
+            warning_msg "Python 3.12 не установлен, используем $(python3 --version)"
+        fi
     fi
 
     step_header "Клонирование репозитория бота"
-    local tmp_repo="/tmp/awg-bot-repo"
+    local tmp_repo="/tmp/awg-bot2-repo"
 
-    if [ -d "$tmp_repo" ]; then
-        info_msg "Обновляем существующую копию репозитория..."
-        git -C "$tmp_repo" pull --ff-only >> "$LOG_FILE" 2>&1 || true
-    else
-        info_msg "Клонируется $BOT_REPO ..."
-        timeout 300 git clone --depth=1 "$BOT_REPO" "$tmp_repo" >> "$LOG_FILE" 2>&1 \
-            || die "Не удалось клонировать репозиторий бота"
-    fi
-    success_msg "Репозиторий получен"
+    rm -rf "$tmp_repo"
+    info_msg "Клонируется $BOT_REPO ..."
+    timeout 300 git clone --depth=1 "$BOT_REPO" "$tmp_repo" >> "$LOG_FILE" 2>&1 \
+        || die "Не удалось клонировать репозиторий бота"
+    success_msg "Репозиторий AWG_Bot2.0 получен"
 
     step_header "Установка файлов бота"
+    rm -rf "$BOT_DIR"
     mkdir -p "$BOT_DIR"
     cp -r "$tmp_repo"/. "$BOT_DIR/"
-    chown -R awgbot:awgbot "$BOT_DIR"
     success_msg "Файлы скопированы в $BOT_DIR"
 
     step_header "Установка Python-зависимостей"
+    info_msg "Создаём venv на $python_bin ..."
+    $python_bin -m venv "$BOT_DIR/.venv" >> "$LOG_FILE" 2>&1 \
+        || die "Не удалось создать venv"
+    "$BOT_DIR/.venv/bin/pip" install --upgrade pip >> "$LOG_FILE" 2>&1
     if [ -f "$BOT_DIR/requirements.txt" ]; then
-        info_msg "Создаём venv и устанавливаем пакеты..."
-        python3 -m venv "$BOT_DIR/.venv" >> "$LOG_FILE" 2>&1
-        "$BOT_DIR/.venv/bin/pip" install --upgrade pip >> "$LOG_FILE" 2>&1
         "$BOT_DIR/.venv/bin/pip" install -r "$BOT_DIR/requirements.txt" >> "$LOG_FILE" 2>&1 \
             || warning_msg "Часть зависимостей не установлена (см. лог)"
-        chown -R awgbot:awgbot "$BOT_DIR/.venv"
         success_msg "Python-пакеты установлены"
     else
-        warning_msg "requirements.txt не найден - пропускаем pip install"
+        warning_msg "requirements.txt не найден"
     fi
 
-    step_header "Создание конфигурации бота (.env)"
-    local bot_token admin_id
+    step_header "Настройка конфигурации бота (config.py)"
+    echo ""
+    print_color "$CYAN"   "  AWG_Bot2.0 требует следующие данные:"
+    print_color "$GRAY"   "  - Bot Token  : получить у @BotFather в Telegram"
+    print_color "$GRAY"   "  - Admin ID   : получить у @userinfobot в Telegram"
+    print_color "$GRAY"   "  - Server IP  : внешний IP этого сервера"
+    echo ""
 
-    print_color "$YELLOW" "  Получите токен у @BotFather в Telegram"
+    local bot_token admin_id server_ip awg_port
+
+    print_color "$YELLOW" "  Получите токен у @BotFather -> /newbot"
     bot_token=$(ask_secret "Bot Token")
     [ -n "$bot_token" ] || die "Bot Token не может быть пустым"
 
-    print_color "$YELLOW" "  Узнать свой ID можно у @userinfobot"
-    admin_id=$(ask_input "Ваш Telegram ID")
+    print_color "$YELLOW" "  Узнать свой ID: напишите @userinfobot -> /start"
+    admin_id=$(ask_input "Ваш Telegram ID (числовой)")
     [ -n "$admin_id" ] || die "Telegram ID не может быть пустым"
 
-    cat > "$BOT_DIR/.env" << EOF
-BOT_TOKEN=$bot_token
-ADMIN_ID=$admin_id
-LOG_LEVEL=INFO
-DATABASE_PATH=$BOT_DIR/data.db
-WG_CONFIG_PATH=$AWG_CONF_DIR/${AWG_IFACE}.conf
-WG_INTERFACE=$AWG_IFACE
-VPN_SUBNET=$VPN_SUBNET
-VPN_DNS=8.8.8.8,8.8.4.4
+    # Пытаемся определить внешний IP автоматически
+    local detected_ip
+    detected_ip=$(curl -4 -fsSL ifconfig.me 2>/dev/null || curl -4 -fsSL api.ipify.org 2>/dev/null || echo "")
+    server_ip=$(ask_input "Внешний IP сервера" "$detected_ip")
+    [ -n "$server_ip" ] || die "IP сервера не может быть пустым"
+
+    awg_port=$(ask_input "Порт AmneziaWG" "$AWG_PORT")
+
+    # Записываем в config.py
+    cat > "$BOT_DIR/config.py" << EOF
+# AWG Bot 2.0 - конфигурация
+# Сгенерировано установщиком (авторы: svod011929, SXCVIO)
+
+bot_token: str = "$bot_token"
+admin_ids: list = [$admin_id]
+
+# Сервер
+server_ip: str = "$server_ip"
+server_port: int = $awg_port
+server_subnet: str = "$VPN_SUBNET"
+ipv6_enabled: bool = False
+
+# AmneziaWG
+awg_interface: str = "$AWG_IFACE"
+awg_config_dir: str = "$AWG_CONF_DIR"
+awg_config_file: str = "$AWG_CONF_DIR/${AWG_IFACE}.conf"
+
+# Пути
+database_path: str = "$BOT_DIR/clients.db"
+backup_dir: str = "$BOT_DIR/backups"
 EOF
 
-    chown awgbot:awgbot "$BOT_DIR/.env"
-    chmod 600 "$BOT_DIR/.env"
-    success_msg "Конфигурация сохранена: $BOT_DIR/.env"
+    chmod 600 "$BOT_DIR/config.py"
+    mkdir -p "$BOT_DIR/backups"
+    success_msg "Конфигурация сохранена: $BOT_DIR/config.py"
 
     echo ""
 }
@@ -500,41 +535,27 @@ EOF
 
     step_header "Сервис awg-bot"
 
-    # Определяем исполняемый Python внутри venv или системный
     local python_bin="$BOT_DIR/.venv/bin/python3"
     [ -x "$python_bin" ] || python_bin="/usr/bin/python3"
-
-    # Определяем точку входа
-    local main_script="main.py"
-    for f in main.py bot.py app.py run.py; do
-        [ -f "$BOT_DIR/$f" ] && { main_script="$f"; break; }
-    done
 
     cat > /etc/systemd/system/awg-bot.service << EOF
 [Unit]
 Description=AWG Bot 2.0 (Telegram VPN Manager)
-Documentation=https://github.com/JB-SelfCompany/AWG_Bot
+Documentation=https://github.com/JB-SelfCompany/AWG_Bot2.0
 After=network-online.target awg-quick@${AWG_IFACE}.service
 Wants=network-online.target
 Requires=awg-quick@${AWG_IFACE}.service
 
 [Service]
 Type=simple
-User=awgbot
-Group=awgbot
+User=root
 WorkingDirectory=$BOT_DIR
-ExecStart=$python_bin $BOT_DIR/$main_script
+ExecStart=$python_bin $BOT_DIR/main.py
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 Environment=PYTHONUNBUFFERED=1
-
-# Ограничения безопасности
-NoNewPrivileges=yes
-ProtectSystem=strict
-ReadWritePaths=$BOT_DIR $AWG_CONF_DIR
-PrivateTmp=yes
 
 [Install]
 WantedBy=multi-user.target
