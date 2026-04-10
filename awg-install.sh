@@ -2,7 +2,7 @@
 
 ################################################################################
 #   AWG Bot 2.0 + AmneziaWG Auto-Installer v3.0
-#   MIT License | Авторы: svod011929 | Обновил SXCVIO
+#   MIT License | Авторы: svod011929 | upd SXCVIO
 ################################################################################
 
 # Принудительно UTF-8 локаль
@@ -193,14 +193,26 @@ confirm_installation() {
     section_header "[!]  ПОДТВЕРЖДЕНИЕ"
 
     print_color "$YELLOW" "  Скрипт выполнит следующие действия:"
-    print_color "$GRAY"   "    1. apt-get update && установка зависимостей сборки"
-    print_color "$GRAY"   "    2. Клонирование и компиляция AmneziaWG"
+    print_color "$GRAY"   "    1. apt-get update && установка зависимостей"
+    print_color "$GRAY"   "    2. Установка AmneziaWG через PPA"
     print_color "$GRAY"   "    3. Генерация ключей и создание конфигурации WG"
-    print_color "$GRAY"   "    4. Клонирование AWG Bot 2.0 + pip install"
+    print_color "$GRAY"   "    4. Установка AWG Bot 2.0 + pip install"
     print_color "$GRAY"   "    5. Создание systemd-сервисов и их запуск"
     echo ""
+    print_color "$YELLOW" "  Нажмите Enter для продолжения или Ctrl+C для отмены..."
 
-    ask_yes_no "Продолжить установку?" || { print_color "$YELLOW" "  Отменено."; exit 0; }
+    # Countdown 10 секунд — если нет ответа, продолжаем автоматически
+    local i=10
+    while [ $i -gt 0 ]; do
+        printf "\r  Начало через %d сек... (Enter - сразу, Ctrl+C - отмена)  " "$i"
+        if read -r -t 1 _; then
+            echo ""
+            break
+        fi
+        i=$((i - 1))
+    done
+    echo ""
+    print_color "$GREEN" "  Начинаем установку..."
 }
 
 # ── Установка зависимостей ────────────────────────────────────────────────────
