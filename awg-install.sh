@@ -2,10 +2,8 @@
 
 ################################################################################
 #   AWG Bot 2.0 + AmneziaWG Auto-Installer v3.0
-#   MIT License | Авторы: svod011929 | Обновил  SXCVIO
+#   MIT License | Авторы: svod011929 | Обновил SXCVIO
 ################################################################################
-
-set -euo pipefail
 
 # Принудительно UTF-8 локаль
 export LANG=en_US.UTF-8
@@ -49,7 +47,7 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"; }
 
 print_color() {
     local color=$1; shift
-    echo -e "${color}$*${NC}"
+    printf "%b%s%b\n" "${color}" "$*" "${NC}"
 }
 
 section_header() {
@@ -61,7 +59,7 @@ section_header() {
 }
 
 step_header() {
-    ((INSTALL_STEP++))
+    INSTALL_STEP=$((INSTALL_STEP + 1))
     echo ""
     print_color "$MAGENTA" "[$INSTALL_STEP/$TOTAL_STEPS] * $1"
     print_color "$GRAY" "$(printf '─%.0s' {1..70})"
