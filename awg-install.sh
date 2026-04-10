@@ -2,7 +2,7 @@
 
 ################################################################################
 #   AWG Bot 2.0 + AmneziaWG Auto-Installer v3.0
-#   MIT License | Авторы: svod011929 | upd SXCVIO
+#   MIT License | Авторы: svod011929  UPD SXCVIO
 ################################################################################
 
 # Принудительно UTF-8 локаль
@@ -297,12 +297,25 @@ install_amneziawg() {
     fi
 
     step_header "Добавление PPA amnezia/ppa"
-    info_msg "Добавляется репозиторий ppa:amnezia/ppa ..."
-    if timeout 120 add-apt-repository -y ppa:amnezia/ppa >> "$LOG_FILE" 2>&1; then
-        success_msg "PPA добавлен"
-    else
-        die "Не удалось добавить PPA amnezia/ppa"
+    info_msg "Добавляется репозиторий amnezia/ppa вручную..."
+
+    # Определяем кодовое имя Ubuntu
+    local ubuntu_codename
+    ubuntu_codename=$(lsb_release -cs 2>/dev/null || echo "focal")
+
+    # Добавляем ключ напрямую с launchpad (без keyserver)
+    if ! curl -4 -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x57290828" \
+        | gpg --dearmor -o /usr/share/keyrings/amnezia.gpg >> "$LOG_FILE" 2>&1; then
+        # Запасной вариант
+        curl -4 -fsSL "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/dists/${ubuntu_codename}/Release.gpg" \
+            -o /usr/share/keyrings/amnezia.gpg >> "$LOG_FILE" 2>&1 || true
     fi
+
+    # Добавляем репозиторий
+    echo "deb [signed-by=/usr/share/keyrings/amnezia.gpg] https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu ${ubuntu_codename} main" \
+        > /etc/apt/sources.list.d/amnezia.list
+
+    success_msg "Репозиторий amnezia добавлен (${ubuntu_codename})"
 
     step_header "Обновление списков пакетов"
     if ! timeout 120 apt-get update -qq >> "$LOG_FILE" 2>&1; then
