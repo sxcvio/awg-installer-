@@ -96,20 +96,20 @@ ask_input() {
     local default="${2:-}"
     local response
     if [ -n "$default" ]; then
-        printf "${YELLOW}  ? %s [%s]: ${NC}" "$question" "$default"
+        printf "${YELLOW}  ? %s [%s]: ${NC}" "$question" "$default" > /dev/tty
     else
-        printf "${YELLOW}  ? %s: ${NC}" "$question"
+        printf "${YELLOW}  ? %s: ${NC}" "$question" > /dev/tty
     fi
-    read -r response
+    read -r response < /dev/tty
     echo "${response:-$default}"
 }
 
 ask_secret() {
     local question="$1"
     local response
-    printf "${YELLOW}  ? %s: ${NC}" "$question"
-    read -rs response
-    echo ""
+    printf "${YELLOW}  ? %s: ${NC}" "$question" > /dev/tty
+    read -rs response < /dev/tty
+    echo "" > /dev/tty
     echo "$response"
 }
 
@@ -407,21 +407,18 @@ install_awg_bot() {
     section_header "[BOT] УСТАНОВКА AWG BOT 2.0"
 
     step_header "Установка Python 3.12"
-    # AWG_Bot2.0 требует Python 3.12+
     local python_bin
     if command -v python3.12 &>/dev/null; then
         python_bin="python3.12"
         success_msg "Python 3.12 уже установлен"
     else
-        info_msg "Добавляем PPA deadsnakes для Python 3.12..."
-        add-apt-repository -y ppa:deadsnakes/ppa >> "$LOG_FILE" 2>&1 || true
-        apt-get update -qq >> "$LOG_FILE" 2>&1
+        info_msg "Устанавливаем python3.12 через apt..."
         if timeout 300 apt-get install -y python3.12 python3.12-venv python3.12-dev >> "$LOG_FILE" 2>&1; then
             python_bin="python3.12"
             success_msg "Python 3.12 установлен"
         else
             python_bin="python3"
-            warning_msg "Python 3.12 не установлен, используем $(python3 --version)"
+            warning_msg "Python 3.12 недоступен, используем $(python3 --version 2>&1)"
         fi
     fi
 
@@ -515,7 +512,11 @@ create_services() {
     section_header "[SVC]  SYSTEMD-СЕРВИСЫ"
 
     step_header "Сервис awg-quick@"
-    cat > /etc/systemd/system/awg-quick@.service << 'EOF'
+    local awg_quick_bin
+    awg_quick_bin=$(command -v awg-quick 2>/dev/null || echo "/usr/bin/awg-quick")
+    info_msg "awg-quick: $awg_quick_bin"
+
+    cat > /etc/systemd/system/awg-quick@.service << EOF
 [Unit]
 Description=AmneziaWG VPN - %i
 After=network-online.target
@@ -524,14 +525,13 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/bin/awg-quick up %i
-ExecStop=/usr/local/bin/awg-quick down %i
-ExecReload=/bin/kill -HUP $MAINPID
+ExecStart=${awg_quick_bin} up %i
+ExecStop=${awg_quick_bin} down %i
 
 [Install]
 WantedBy=multi-user.target
 EOF
-    success_msg "awg-quick@.service создан"
+    success_msg "awg-quick@.service создан ($awg_quick_bin)"
 
     step_header "Сервис awg-bot"
 
@@ -619,9 +619,9 @@ show_summary() {
     [ -n "$server_pubkey" ] && print_color "$WHITE" "  - Публ. ключ: $server_pubkey"
     echo ""
 
-    print_color "$CYAN" "[BOT] AWG Bot:"
+    print_color "$CYAN" "[BOT] AWG Bot 2.0:"
     print_color "$WHITE" "  - Директория: $BOT_DIR"
-    print_color "$WHITE" "  - Конфиг    : $BOT_DIR/.env"
+    print_color "$WHITE" "  - Конфиг    : $BOT_DIR/config.py"
     print_color "$WHITE" "  - Логи      : journalctl -u awg-bot -f"
     echo ""
 
@@ -630,7 +630,7 @@ show_summary() {
     print_color "$GRAY"  "  systemctl status awg-quick@${AWG_IFACE}"
     print_color "$GRAY"  "  journalctl -u awg-bot -f"
     print_color "$GRAY"  "  journalctl -u awg-quick@${AWG_IFACE} -n 50"
-    print_color "$GRAY"  "  nano $BOT_DIR/.env"
+    print_color "$GRAY"  "  nano $BOT_DIR/config.py"
     echo ""
 
     print_color "$YELLOW" "[TIME]  Время установки: $((duration/60))м $((duration%60))с"
