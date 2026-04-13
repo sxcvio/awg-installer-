@@ -262,16 +262,71 @@ setup_amneziawg() {
     info "Public key: $pub"
     echo "$pub" > /tmp/awg_server_pubkey
 
+    step_header "Генерация AWG 1.5 параметров обфускации"
+    # По документации amneziawg-linux-kernel-module:
+    # - H1-H4 уникальны, диапазон 5..2147483647
+    # - S1: 15..150, S2: 15..150, S1+56 != S2
+    # - Jc: 4..12, Jmin < Jmax, оба < 1280
+    # - S1,S2,H1-H4 ДОЛЖНЫ совпадать на сервере и клиенте (Jc/Jmin/Jmax могут отличаться)
+    # AWG 2.0 без параметров I1-I5 работает в режиме 1.5
+
+    local jc jmin jmax s1 s2 h1 h2 h3 h4
+    jc=$(( (RANDOM % 9) + 4 ))          # 4..12
+    jmin=$(( (RANDOM % 50) + 20 ))      # 20..69
+    jmax=$(( jmin + (RANDOM % 80) + 30 )) # jmin+30..jmin+109
+    s1=$(( (RANDOM % 136) + 15 ))       # 15..150
+    # S1+56 != S2 — подбираем S2
+    s2=$(( (RANDOM % 136) + 15 ))
+    while [ $(( s1 + 56 )) -eq "$s2" ]; do
+        s2=$(( (RANDOM % 136) + 15 ))
+    done
+    # H1-H4: 4 уникальных числа
+    h1=$(( (RANDOM * RANDOM % 2147483642) + 5 ))
+    h2=$(( (RANDOM * RANDOM % 2147483642) + 5 ))
+    while [ "$h2" -eq "$h1" ]; do h2=$(( (RANDOM * RANDOM % 2147483642) + 5 )); done
+    h3=$(( (RANDOM * RANDOM % 2147483642) + 5 ))
+    while [ "$h3" -eq "$h1" ] || [ "$h3" -eq "$h2" ]; do h3=$(( (RANDOM * RANDOM % 2147483642) + 5 )); done
+    h4=$(( (RANDOM * RANDOM % 2147483642) + 5 ))
+    while [ "$h4" -eq "$h1" ] || [ "$h4" -eq "$h2" ] || [ "$h4" -eq "$h3" ]; do h4=$(( (RANDOM * RANDOM % 2147483642) + 5 )); done
+
+    info "Jc=$jc Jmin=$jmin Jmax=$jmax S1=$s1 S2=$s2"
+    info "H1=$h1 H2=$h2 H3=$h3 H4=$h4"
+
+    # Сохраняем параметры для финального вывода и клиентского конфига
+    cat > /tmp/awg_obfs_params << EOF
+JC=$jc
+JMIN=$jmin
+JMAX=$jmax
+S1=$s1
+S2=$s2
+H1=$h1
+H2=$h2
+H3=$h3
+H4=$h4
+EOF
+    ok "Параметры обфускации сгенерированы"
+
     step_header "Создание конфигурации сервера"
     mkdir -p "$AWG_CONF_DIR"
 
-    # DNS намеренно убран — вызывает ошибку если resolvconf не установлен
-    # IP-форвардинг включён через PostUp
     cat > "$AWG_CONF_DIR/${AWG_IFACE}.conf" << EOF
 [Interface]
 PrivateKey = $priv
 Address = ${VPN_SERVER_ADDR}/24
 ListenPort = $VPN_PORT
+
+# AWG 1.5 параметры обфускации
+# H1-H4, S1, S2 ДОЛЖНЫ совпадать с клиентом!
+# Jc, Jmin, Jmax могут отличаться от клиента
+Jc = $jc
+Jmin = $jmin
+Jmax = $jmax
+S1 = $s1
+S2 = $s2
+H1 = $h1
+H2 = $h2
+H3 = $h3
+H4 = $h4
 
 PostUp   = sysctl -w net.ipv4.ip_forward=1
 PostUp   = iptables -t nat -A POSTROUTING -s $VPN_NET -o $iface -j MASQUERADE
@@ -279,13 +334,13 @@ PostUp   = iptables -A FORWARD -i $AWG_IFACE -j ACCEPT
 PostDown = iptables -t nat -D POSTROUTING -s $VPN_NET -o $iface -j MASQUERADE
 PostDown = iptables -D FORWARD -i $AWG_IFACE -j ACCEPT
 
-# Пиры управляются через AWG Bot 2.0
+# Пиры добавляются через AWG Bot 2.0
 EOF
 
     chmod 600 "$AWG_CONF_DIR/${AWG_IFACE}.conf"
     mkdir -p /etc/wireguard
     ln -sf "$AWG_CONF_DIR/${AWG_IFACE}.conf" "/etc/wireguard/${AWG_IFACE}.conf"
-    ok "Конфигурация создана"
+    ok "Конфигурация сервера создана"
 }
 
 install_awg_bot() {
@@ -428,14 +483,24 @@ show_summary() {
     local pub duration
     pub=$(cat /tmp/awg_server_pubkey 2>/dev/null || echo "см.: awg show $AWG_IFACE")
     duration=$(( $(date +%s) - SCRIPT_START_TIME ))
-    rm -f /tmp/awg_server_pubkey
+
+    # Загружаем параметры обфускации
+    local jc jmin jmax s1 s2 h1 h2 h3 h4
+    if [ -f /tmp/awg_obfs_params ]; then
+        # shellcheck source=/dev/null
+        . /tmp/awg_obfs_params
+        jc=$JC; jmin=$JMIN; jmax=$JMAX; s1=$S1; s2=$S2
+        h1=$H1; h2=$H2; h3=$H3; h4=$H4
+    fi
+
+    rm -f /tmp/awg_server_pubkey /tmp/awg_obfs_params
 
     echo ""
     pc "$GREEN" "╔════════════════════════════════════════════════════════════════╗"
     pc "$GREEN" "║                  УСТАНОВКА ЗАВЕРШЕНА                          ║"
     pc "$GREEN" "╚════════════════════════════════════════════════════════════════╝"
     echo ""
-    pc "$CYAN"  "  AmneziaWG:"
+    pc "$CYAN"  "  AmneziaWG 1.5:"
     pc "$WHITE" "    Интерфейс  : $AWG_IFACE"
     pc "$WHITE" "    Конфиг     : $AWG_CONF_DIR/${AWG_IFACE}.conf"
     pc "$WHITE" "    Порт       : $VPN_PORT/UDP"
@@ -448,12 +513,44 @@ show_summary() {
     pc "$WHITE" "    Admin ID   : $ADMIN_ID"
     pc "$WHITE" "    Server IP  : $SERVER_IP"
     echo ""
-    pc "$CYAN"  "  Полезные команды:"
+
+    # Показываем шаблон клиентского конфига
+    pc "$CYAN"  "  Шаблон конфига для КЛИЕНТА (сохраните):"
+    pc "$GRAY"  "  ------------------------------------------------"
+    printf "${WHITE}"
+    cat << EOF
+  [Interface]
+  PrivateKey = <СГЕНЕРИРОВАТЬ_ЧЕРЕЗ_БОТА>
+  Address = 10.10.8.X/32
+  DNS = 1.1.1.1, 8.8.8.8
+  Jc = $jc
+  Jmin = $jmin
+  Jmax = $jmax
+  S1 = $s1
+  S2 = $s2
+  H1 = $h1
+  H2 = $h2
+  H3 = $h3
+  H4 = $h4
+
+  [Peer]
+  PublicKey = $pub
+  Endpoint = $SERVER_IP:$VPN_PORT
+  AllowedIPs = 0.0.0.0/0
+  PersistentKeepalive = 25
+EOF
+    printf "${NC}"
+    pc "$GRAY"  "  ------------------------------------------------"
+    pc "$YELLOW" "  ВАЖНО: H1-H4 и S1-S2 должны совпадать на сервере и клиенте!"
+    pc "$YELLOW" "  Клиентские конфиги лучше создавать через AWG Bot 2.0 в Telegram."
+    echo ""
+
+    pc "$CYAN"  "  Команды управления:"
     pc "$GRAY"  "    systemctl status awg-quick@${AWG_IFACE}"
     pc "$GRAY"  "    systemctl status awg-bot"
     pc "$GRAY"  "    journalctl -u awg-bot -f"
     pc "$GRAY"  "    journalctl -u awg-quick@${AWG_IFACE} -n 50"
-    pc "$GRAY"  "    nano $BOT_DIR/config.py"
+    pc "$GRAY"  "    nano $AWG_CONF_DIR/${AWG_IFACE}.conf"
     echo ""
     pc "$YELLOW" "  Время установки : $((duration/60))м $((duration%60))с"
     pc "$GRAY"   "  Лог             : $LOG_FILE"
