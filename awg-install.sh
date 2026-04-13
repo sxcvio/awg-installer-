@@ -1,520 +1,356 @@
 #!/bin/bash
-
 ################################################################################
-#   AWG Bot 2.0 + AmneziaWG Auto-Installer v3.0
-#   MIT License | Авторы: svod011929 UPD SXCVIO
+#   AWG Bot 2.0 + AmneziaWG Auto-Installer v3.1
+#   MIT License | Авторы: svod011929, SXCVIO
 ################################################################################
 
-# Принудительно UTF-8 локаль
 export LANG=en_US.UTF-8
 export LC_ALL=en_US.UTF-8
 export PYTHONIOENCODING=utf-8
 
-# ── Цвета ────────────────────────────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-MAGENTA='\033[0;35m'
-WHITE='\033[1;37m'
-GRAY='\033[0;37m'
-NC='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+BLUE='\033[0;34m'; CYAN='\033[0;36m'; MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'; GRAY='\033[0;37m'; NC='\033[0m'
 
-CHECKMARK='[+]'
-CROSS='[-]'
-ARROW='>'
-
-# ── Глобальные переменные ─────────────────────────────────────────────────────
-SCRIPT_VERSION="3.0"
+SCRIPT_VERSION="3.1"
 SCRIPT_START_TIME=$(date +%s)
 LOG_FILE="/var/log/awg-bot-install.log"
 INSTALL_STEP=0
-TOTAL_STEPS=14
+TOTAL_STEPS=13
 
-AWG_REPO="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git"
 BOT_REPO="https://github.com/JB-SelfCompany/AWG_Bot2.0.git"
 BOT_DIR="/opt/awg-bot"
 AWG_CONF_DIR="/etc/amnezia/amneziawg"
 AWG_IFACE="awg0"
 AWG_PORT=42666
-VPN_SERVER_ADDR="10.10.8.1"
 VPN_SUBNET="10.10.8.0/24"
-VPN_CLIENT_ADDR="10.10.8.2"
+VPN_SERVER_ADDR="10.10.8.1"
 
-# ── Утилиты вывода ────────────────────────────────────────────────────────────
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"; }
-
-print_color() {
-    local color=$1; shift
-    printf "%b%s%b\n" "${color}" "$*" "${NC}"
-}
+pc()  { printf "%b%s%b\n" "$1" "$2" "$NC"; }
 
 section_header() {
     echo ""
-    print_color "$CYAN" "╔════════════════════════════════════════════════════════════════╗"
+    pc "$CYAN" "╔════════════════════════════════════════════════════════════════╗"
     printf "${CYAN}║  %-62s║${NC}\n" "$1"
-    print_color "$CYAN" "╚════════════════════════════════════════════════════════════════╝"
+    pc "$CYAN" "╚════════════════════════════════════════════════════════════════╝"
     echo ""
 }
 
 step_header() {
     INSTALL_STEP=$((INSTALL_STEP + 1))
     echo ""
-    print_color "$MAGENTA" "[$INSTALL_STEP/$TOTAL_STEPS] * $1"
-    print_color "$GRAY" "$(printf '─%.0s' {1..70})"
+    pc "$MAGENTA" "[$INSTALL_STEP/$TOTAL_STEPS] >> $1"
+    pc "$GRAY" "----------------------------------------------------------------------"
     log "STEP $INSTALL_STEP/$TOTAL_STEPS: $1"
 }
 
-success_msg() { print_color "$GREEN"  "  $CHECKMARK $1"; log "OK: $1"; }
-error_msg()   { print_color "$RED"    "  $CROSS $1";     log "ERR: $1"; }
-info_msg()    { print_color "$BLUE"   "  $ARROW $1";     log "INFO: $1"; }
-warning_msg() { print_color "$YELLOW" "  [!] $1";          log "WARN: $1"; }
+ok()   { pc "$GREEN"  "  [+] $1"; log "OK: $1"; }
+fail() { pc "$RED"    "  [-] $1"; log "ERR: $1"; }
+info() { pc "$BLUE"   "  --> $1"; log "INFO: $1"; }
+warn() { pc "$YELLOW" "  [!] $1"; log "WARN: $1"; }
+die()  { fail "$1"; pc "$RED" "  Установка прервана. Лог: $LOG_FILE"; exit 1; }
 
-die() {
-    error_msg "$1"
-    print_color "$RED" "\n  Установка прервана. Лог: $LOG_FILE"
-    exit 1
-}
-
-ask_yes_no() {
-    local question="$1"
-    local response
-    while true; do
-        printf "${YELLOW}  ? %s (yes/no): ${NC}" "$question"
-        read -r response
-        case "$response" in
-            yes|y|YES|Y) return 0 ;;
-            no|n|NO|N)   return 1 ;;
-            *) error_msg "Введите 'yes' или 'no'" ;;
-        esac
-    done
-}
-
-ask_input() {
-    local question="$1"
-    local default="${2:-}"
-    local response
-    if [ -n "$default" ]; then
-        printf "${YELLOW}  ? %s [%s]: ${NC}" "$question" "$default" > /dev/tty
+ask() {
+    local q="$1" def="${2:-}" ans
+    if [ -n "$def" ]; then
+        printf "${YELLOW}  ? %s [%s]: ${NC}" "$q" "$def" >/dev/tty
     else
-        printf "${YELLOW}  ? %s: ${NC}" "$question" > /dev/tty
+        printf "${YELLOW}  ? %s: ${NC}" "$q" >/dev/tty
     fi
-    read -r response < /dev/tty
-    echo "${response:-$default}"
+    read -r ans </dev/tty
+    echo "${ans:-$def}"
 }
 
 ask_secret() {
-    local question="$1"
-    local response
-    printf "${YELLOW}  ? %s: ${NC}" "$question" > /dev/tty
-    read -rs response < /dev/tty
-    echo "" > /dev/tty
-    echo "$response"
+    local q="$1" ans
+    printf "${YELLOW}  ? %s: ${NC}" "$q" >/dev/tty
+    read -rs ans </dev/tty
+    printf "\n" >/dev/tty
+    echo "$ans"
 }
 
-# ── Баннер ───────────────────────────────────────────────────────────────────
 show_banner() {
     clear
-    print_color "$MAGENTA" "╔════════════════════════════════════════════════════════════════╗"
-    print_color "$MAGENTA" "║                                                                ║"
-    print_color "$CYAN"    "║      >>>  AWG Bot 2.0 + AmneziaWG Auto-Installer  >>>           ║"
-    printf "${MAGENTA}║%*s%-*s║${NC}\n" 20 "" 44 "Версия $SCRIPT_VERSION"
-    print_color "$MAGENTA" "║                                                                ║"
-    print_color "$MAGENTA" "║  Устанавливает:                                               ║"
-    print_color "$MAGENTA" "║    - AmneziaWG (модуль ядра + инструменты)                   ║"
-    print_color "$MAGENTA" "║    - AWG Bot 2.0 (Telegram-бот для управления VPN)            ║"
-    print_color "$MAGENTA" "║    - Systemd-сервисы с автозапуском                          ║"
-    print_color "$MAGENTA" "║                                                                ║"
-    print_color "$MAGENTA" "╚════════════════════════════════════════════════════════════════╝"
+    pc "$MAGENTA" "╔════════════════════════════════════════════════════════════════╗"
+    pc "$MAGENTA" "║                                                                ║"
+    pc "$CYAN"    "║        AWG Bot 2.0 + AmneziaWG Auto-Installer                 ║"
+    printf "${MAGENTA}║  %-62s║${NC}\n" "  Версия $SCRIPT_VERSION | by svod011929 & SXCVIO"
+    pc "$MAGENTA" "║                                                                ║"
+    pc "$MAGENTA" "║  Устанавливает:                                               ║"
+    pc "$MAGENTA" "║    - AmneziaWG VPN (через официальный PPA)                   ║"
+    pc "$MAGENTA" "║    - AWG Bot 2.0 (Telegram-бот управления VPN)               ║"
+    pc "$MAGENTA" "║    - Systemd-сервисы с автозапуском                          ║"
+    pc "$MAGENTA" "║                                                                ║"
+    pc "$MAGENTA" "╚════════════════════════════════════════════════════════════════╝"
     echo ""
 }
 
-# ── Проверка требований ───────────────────────────────────────────────────────
 check_requirements() {
-    section_header "[?] ПРОВЕРКА ТРЕБОВАНИЙ"
+    section_header "ПРОВЕРКА ТРЕБОВАНИЙ"
 
-    step_header "Права доступа"
-    [ "$EUID" -eq 0 ] || die "Скрипт должен быть запущен с правами root (sudo)"
-    success_msg "Запущен с правами root"
+    step_header "Права root"
+    [ "$EUID" -eq 0 ] || die "Запустите с правами root: sudo bash awg-install.sh"
+    ok "Запущен с правами root"
 
     step_header "Операционная система"
-    if [ -f /etc/os-release ]; then
-        # shellcheck source=/dev/null
-        . /etc/os-release
-        info_msg "Обнаружена: $PRETTY_NAME"
-        case "$ID" in
-            ubuntu|debian|raspbian) success_msg "ОС поддерживается" ;;
-            *) warning_msg "ОС '$ID' официально не тестировалась - продолжаем" ;;
-        esac
-    else
-        die "Не удалось определить ОС (/etc/os-release отсутствует)"
-    fi
+    [ -f /etc/os-release ] || die "/etc/os-release не найден"
+    . /etc/os-release
+    info "Обнаружена: $PRETTY_NAME"
+    case "$ID" in
+        ubuntu|debian) ok "ОС поддерживается" ;;
+        *) warn "ОС '$ID' не тестировалась — продолжаем" ;;
+    esac
 
-    step_header "Подключение к интернету"
-    if timeout 5 ping -c 1 8.8.8.8 &>/dev/null || timeout 5 ping -c 1 1.1.1.1 &>/dev/null; then
-        success_msg "Интернет доступен"
-    else
-        die "Нет доступа к интернету - установка невозможна"
-    fi
+    step_header "Интернет"
+    timeout 5 ping -c1 8.8.8.8 &>/dev/null || timeout 5 ping -c1 1.1.1.1 &>/dev/null \
+        || die "Нет доступа к интернету"
+    ok "Интернет доступен"
 
-    step_header "Оперативная память"
-    local free_ram
-    free_ram=$(free -m | awk 'NR==2 {print $7}')
-    info_msg "Свободно RAM: ${free_ram} МБ"
-    [ "$free_ram" -gt 256 ] || die "Недостаточно RAM (нужно >256 МБ, доступно ${free_ram} МБ)"
-    success_msg "Память в норме"
-
-    step_header "Место на диске"
-    local free_disk
-    free_disk=$(df -m / | awk 'NR==2 {print $4}')
-    info_msg "Свободно на /: ${free_disk} МБ"
-    [ "$free_disk" -gt 2048 ] || die "Недостаточно места (нужно >2 ГБ, доступно ${free_disk} МБ)"
-    success_msg "Место на диске достаточно"
-
-    step_header "Версия ядра"
-    local kernel
-    kernel=$(uname -r)
-    info_msg "Ядро: $kernel"
-    local major minor
-    major=$(echo "$kernel" | cut -d. -f1)
-    minor=$(echo "$kernel" | cut -d. -f2)
-    if [ "$major" -lt 5 ] || { [ "$major" -eq 5 ] && [ "$minor" -lt 6 ]; }; then
-        warning_msg "Рекомендуется ядро >=5.6 (текущее $kernel может не поддерживать WireGuard)"
-    else
-        success_msg "Версия ядра совместима"
-    fi
-
-    echo ""
+    step_header "Ресурсы"
+    local ram disk
+    ram=$(free -m | awk 'NR==2{print $7}')
+    disk=$(df -m / | awk 'NR==2{print $4}')
+    info "RAM: ${ram} МБ | Диск: ${disk} МБ"
+    [ "$ram"  -gt 256  ] || die "Недостаточно RAM (нужно >256 МБ)"
+    [ "$disk" -gt 1024 ] || die "Недостаточно места (нужно >1 ГБ)"
+    ok "Ресурсы в норме"
 }
 
-# ── Подтверждение ─────────────────────────────────────────────────────────────
-confirm_installation() {
-    section_header "[!]  ПОДТВЕРЖДЕНИЕ"
+collect_user_input() {
+    section_header "НАСТРОЙКА — ВВЕДИТЕ ДАННЫЕ"
 
-    print_color "$YELLOW" "  Скрипт выполнит следующие действия:"
-    print_color "$GRAY"   "    1. apt-get update && установка зависимостей"
-    print_color "$GRAY"   "    2. Установка AmneziaWG через PPA"
-    print_color "$GRAY"   "    3. Генерация ключей и создание конфигурации WG"
-    print_color "$GRAY"   "    4. Установка AWG Bot 2.0 + pip install"
-    print_color "$GRAY"   "    5. Создание systemd-сервисов и их запуск"
+    pc "$WHITE"  "  Обязательные параметры:"
+    pc "$GRAY"   "    Bot Token — создайте бота: Telegram -> @BotFather -> /newbot"
+    pc "$GRAY"   "    Admin ID  — узнайте свой ID: Telegram -> @userinfobot -> /start"
     echo ""
-    print_color "$YELLOW" "  Нажмите Enter для продолжения или Ctrl+C для отмены..."
 
-    # Countdown 10 секунд — если нет ответа, продолжаем автоматически
+    while true; do
+        BOT_TOKEN=$(ask_secret "Bot Token (обязательно)")
+        [ -n "$BOT_TOKEN" ] && break
+        fail "Token не может быть пустым"
+    done
+
+    while true; do
+        ADMIN_ID=$(ask "Ваш Telegram ID (обязательно)")
+        [[ "$ADMIN_ID" =~ ^[0-9]+$ ]] && break
+        fail "ID должен быть числом"
+    done
+
+    echo ""
+    pc "$WHITE" "  Дополнительные параметры (Enter = значение по умолчанию):"
+    echo ""
+
+    local detected_ip
+    detected_ip=$(curl -4 -fsSL --max-time 5 ifconfig.me 2>/dev/null \
+               || curl -4 -fsSL --max-time 5 api.ipify.org 2>/dev/null \
+               || echo "")
+
+    SERVER_IP=$(ask "Внешний IP сервера" "$detected_ip")
+    [ -n "$SERVER_IP" ] || die "IP сервера не может быть пустым"
+
+    VPN_PORT=$(ask "Порт AmneziaWG/UDP" "$AWG_PORT")
+    VPN_PORT=${VPN_PORT:-$AWG_PORT}
+
+    VPN_NET=$(ask "Подсеть VPN" "$VPN_SUBNET")
+    VPN_NET=${VPN_NET:-$VPN_SUBNET}
+    VPN_SERVER_ADDR=$(echo "$VPN_NET" | sed 's|\.[0-9]*/.*|.1|')
+
+    echo ""
+    ok "Данные получены — Admin ID: $ADMIN_ID | IP: $SERVER_IP | Порт: $VPN_PORT"
+    log "INPUT: admin=$ADMIN_ID ip=$SERVER_IP port=$VPN_PORT subnet=$VPN_NET"
+}
+
+confirm_installation() {
+    section_header "ПОДТВЕРЖДЕНИЕ"
+
+    pc "$WHITE" "  Параметры установки:"
+    pc "$GRAY"  "    Admin ID  : $ADMIN_ID"
+    pc "$GRAY"  "    Server IP : $SERVER_IP"
+    pc "$GRAY"  "    VPN Port  : $VPN_PORT/UDP"
+    pc "$GRAY"  "    Subnet    : $VPN_NET"
+    echo ""
+    pc "$YELLOW" "  Нажмите Enter для продолжения или Ctrl+C для отмены..."
+
     local i=10
     while [ $i -gt 0 ]; do
-        printf "\r  Начало через %d сек... (Enter - сразу, Ctrl+C - отмена)  " "$i"
-        if read -r -t 1 _; then
-            echo ""
-            break
-        fi
+        printf "\r  Начало через %d сек... (Enter - сразу, Ctrl+C - отмена)  " "$i" >/dev/tty
+        if read -r -t 1 _ </dev/tty; then break; fi
         i=$((i - 1))
     done
-    echo ""
-    print_color "$GREEN" "  Начинаем установку..."
+    printf "\n"
+    ok "Начинаем установку..."
 }
 
-# ── Установка зависимостей ────────────────────────────────────────────────────
 install_dependencies() {
-    section_header "[PKG] УСТАНОВКА ЗАВИСИМОСТЕЙ"
+    section_header "БАЗОВЫЕ ЗАВИСИМОСТИ"
 
     step_header "apt-get update"
-    info_msg "Обновление списков пакетов (может занять 2-5 мин)..."
-    if ! timeout 300 apt-get update -qq >> "$LOG_FILE" 2>&1; then
-        warning_msg "apt-get update завершился с ошибками - продолжаем"
-    else
-        success_msg "Списки пакетов обновлены"
-    fi
+    timeout 300 apt-get update -qq >> "$LOG_FILE" 2>&1 \
+        && ok "Списки обновлены" || warn "apt update с ошибками — продолжаем"
 
-    step_header "Установка системных зависимостей"
-    local pkgs=(
-        curl
-        wget
-        git
-        python3
-        python3-pip
-        python3-venv
-        iptables
-    )
-    info_msg "Пакеты: ${pkgs[*]}"
-    info_msg "Это может занять 10-20 минут..."
-
-    if timeout 1800 apt-get install -y --no-install-recommends "${pkgs[@]}" >> "$LOG_FILE" 2>&1; then
-        success_msg "Все зависимости установлены"
-    else
-        warning_msg "Часть пакетов установлена с ошибками (см. лог)"
-        # linux-headers может не найтись на некоторых VPS - это не критично
-    fi
-
-    echo ""
+    step_header "Установка пакетов"
+    # resolvconf нужен для awg-quick DNS
+    local pkgs=(curl wget git python3 python3-pip python3-venv iptables resolvconf)
+    info "Пакеты: ${pkgs[*]}"
+    timeout 600 apt-get install -y --no-install-recommends "${pkgs[@]}" >> "$LOG_FILE" 2>&1 \
+        && ok "Пакеты установлены" || warn "Часть пакетов не установлена"
 }
 
-# ── Шимы awg / awg-quick ──────────────────────────────────────────────────────
-ensure_awg_compatibility() {
-    # Если awg-quick уже есть (после сборки AmneziaWG) - ничего не делаем
-    if command -v awg-quick &>/dev/null && command -v awg &>/dev/null; then
-        info_msg "awg и awg-quick уже доступны - шимы не нужны"
-        return
-    fi
-
-    step_header "Создание шимов awg / awg-quick"
-
-    if ! command -v awg-quick &>/dev/null && command -v wg-quick &>/dev/null; then
-        cat > /usr/local/bin/awg-quick << 'SH'
-#!/bin/bash
-set -e
-IFACE="$2"
-if [[ "$1" =~ ^(up|down)$ ]] && \
-   [ -f "/etc/amnezia/amneziawg/${IFACE}.conf" ] && \
-   [ ! -f "/etc/wireguard/${IFACE}.conf" ]; then
-    mkdir -p /etc/wireguard
-    ln -sf "/etc/amnezia/amneziawg/${IFACE}.conf" "/etc/wireguard/${IFACE}.conf"
-fi
-exec wg-quick "$@"
-SH
-        chmod +x /usr/local/bin/awg-quick
-        success_msg "Создан шим /usr/local/bin/awg-quick"
-    fi
-
-    if ! command -v awg &>/dev/null && command -v wg &>/dev/null; then
-        ln -sf "$(command -v wg)" /usr/local/bin/awg
-        success_msg "Создан шим /usr/local/bin/awg"
-    fi
-}
-
-# ── Установка AmneziaWG ───────────────────────────────────────────────────────
 install_amneziawg() {
-    section_header "[VPN] УСТАНОВКА AMNEZIAWG"
+    section_header "УСТАНОВКА AMNEZIAWG"
 
-    step_header "Установка зависимостей для PPA"
-    if ! timeout 300 apt-get install -y --no-install-recommends \
+    step_header "Зависимости PPA"
+    timeout 300 apt-get install -y --no-install-recommends \
         software-properties-common python3-launchpadlib gnupg2 \
-        "linux-headers-$(uname -r)" >> "$LOG_FILE" 2>&1; then
-        warning_msg "Часть зависимостей не установлена (продолжаем)"
+        "linux-headers-$(uname -r)" >> "$LOG_FILE" 2>&1 \
+        && ok "Зависимости PPA установлены" || warn "Часть зависимостей не установлена"
+
+    step_header "Добавление репозитория amnezia/ppa"
+    local codename
+    codename=$(lsb_release -cs 2>/dev/null || echo "jammy")
+    info "Ubuntu codename: $codename"
+
+    # Пробуем добавить GPG-ключ
+    if curl -4 -fsSL --max-time 30 \
+        "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x57290828" \
+        2>/dev/null | gpg --dearmor -o /usr/share/keyrings/amnezia.gpg 2>/dev/null; then
+        echo "deb [signed-by=/usr/share/keyrings/amnezia.gpg] https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu ${codename} main" \
+            > /etc/apt/sources.list.d/amnezia.list
+        ok "PPA добавлен с GPG-ключом"
     else
-        success_msg "Зависимости установлены"
+        # Запасной вариант без проверки подписи
+        warn "GPG-ключ недоступен — добавляем репо без подписи"
+        echo "deb [trusted=yes] https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu ${codename} main" \
+            > /etc/apt/sources.list.d/amnezia.list
     fi
 
-    step_header "Добавление PPA amnezia/ppa"
-    info_msg "Добавляется репозиторий amnezia/ppa вручную..."
-
-    # Определяем кодовое имя Ubuntu
-    local ubuntu_codename
-    ubuntu_codename=$(lsb_release -cs 2>/dev/null || echo "focal")
-
-    # Добавляем ключ напрямую с launchpad (без keyserver)
-    if ! curl -4 -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x57290828" \
-        | gpg --dearmor -o /usr/share/keyrings/amnezia.gpg >> "$LOG_FILE" 2>&1; then
-        # Запасной вариант
-        curl -4 -fsSL "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/dists/${ubuntu_codename}/Release.gpg" \
-            -o /usr/share/keyrings/amnezia.gpg >> "$LOG_FILE" 2>&1 || true
-    fi
-
-    # Добавляем репозиторий
-    echo "deb [signed-by=/usr/share/keyrings/amnezia.gpg] https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu ${ubuntu_codename} main" \
-        > /etc/apt/sources.list.d/amnezia.list
-
-    success_msg "Репозиторий amnezia добавлен (${ubuntu_codename})"
-
-    step_header "Обновление списков пакетов"
-    if ! timeout 120 apt-get update -qq >> "$LOG_FILE" 2>&1; then
-        warning_msg "apt-get update завершился с ошибками - продолжаем"
-    else
-        success_msg "Списки пакетов обновлены"
-    fi
+    timeout 120 apt-get update -qq >> "$LOG_FILE" 2>&1 \
+        && ok "Списки пакетов обновлены" || warn "apt update с ошибками"
 
     step_header "Установка пакета amneziawg"
-    info_msg "Устанавливается amneziawg (займёт 1-3 минуты)..."
-    if timeout 600 apt-get install -y amneziawg >> "$LOG_FILE" 2>&1; then
-        success_msg "AmneziaWG установлен"
-    else
-        die "Не удалось установить amneziawg - подробности в $LOG_FILE"
-    fi
+    info "Устанавливается amneziawg..."
+    timeout 600 apt-get install -y amneziawg >> "$LOG_FILE" 2>&1 \
+        || die "Не удалось установить amneziawg — см. $LOG_FILE"
+    ok "AmneziaWG установлен"
 
     step_header "Загрузка модуля ядра"
     if modprobe amneziawg >> "$LOG_FILE" 2>&1; then
-        success_msg "Модуль amneziawg загружен"
+        ok "Модуль amneziawg загружен"
         echo "amneziawg" > /etc/modules-load.d/amneziawg.conf
     else
-        warning_msg "modprobe amneziawg не удался - может потребоваться перезагрузка"
+        warn "modprobe amneziawg не удался — возможно нужна перезагрузка"
     fi
-
-    ensure_awg_compatibility
-    echo ""
 }
 
-# ── Настройка AmneziaWG ───────────────────────────────────────────────────────
 setup_amneziawg() {
-    section_header "[CFG] НАСТРОЙКА AMNEZIAWG"
+    section_header "КОНФИГУРАЦИЯ AMNEZIAWG"
 
     step_header "Определение сетевого интерфейса"
-    local outbound_iface
-    outbound_iface=$(ip route show default | awk '{print $5}' | head -n1)
-    if [ -z "$outbound_iface" ]; then
-        outbound_iface=$(ask_input "Не удалось определить интерфейс. Введите вручную (например, eth0)" "eth0")
-    fi
-    success_msg "Исходящий интерфейс: $outbound_iface"
+    local iface
+    iface=$(ip route show default | awk '{print $5}' | head -n1)
+    [ -n "$iface" ] || iface=$(ask "Введите сетевой интерфейс вручную" "eth0")
+    ok "Исходящий интерфейс: $iface"
 
-    step_header "Генерация ключевой пары сервера"
-    local private_key public_key
-    # Используем awg если доступен, иначе wg
-    local keygen_cmd
-    keygen_cmd=$(command -v awg || command -v wg)
-    private_key=$("$keygen_cmd" genkey)
-    public_key=$(echo "$private_key" | "$keygen_cmd" pubkey)
-    success_msg "Ключи сервера сгенерированы"
-    info_msg "Public key: $public_key"
+    step_header "Генерация ключей"
+    local keytool priv pub
+    keytool=$(command -v awg 2>/dev/null || command -v wg 2>/dev/null) \
+        || die "Команда awg/wg не найдена"
+    priv=$("$keytool" genkey)
+    pub=$(echo "$priv" | "$keytool" pubkey)
+    ok "Ключи сгенерированы"
+    info "Public key: $pub"
+    echo "$pub" > /tmp/awg_server_pubkey
 
     step_header "Создание конфигурации сервера"
     mkdir -p "$AWG_CONF_DIR"
 
+    # DNS намеренно убран — вызывает ошибку если resolvconf не установлен
+    # IP-форвардинг включён через PostUp
     cat > "$AWG_CONF_DIR/${AWG_IFACE}.conf" << EOF
 [Interface]
-PrivateKey = $private_key
+PrivateKey = $priv
 Address = ${VPN_SERVER_ADDR}/24
-ListenPort = $AWG_PORT
-DNS = 8.8.8.8, 8.8.4.4
+ListenPort = $VPN_PORT
 
-# IP-форвардинг и NAT
 PostUp   = sysctl -w net.ipv4.ip_forward=1
-PostUp   = iptables -t nat -A POSTROUTING -s $VPN_SUBNET -o $outbound_iface -j MASQUERADE
+PostUp   = iptables -t nat -A POSTROUTING -s $VPN_NET -o $iface -j MASQUERADE
 PostUp   = iptables -A FORWARD -i $AWG_IFACE -j ACCEPT
-PostDown = iptables -t nat -D POSTROUTING -s $VPN_SUBNET -o $outbound_iface -j MASQUERADE
+PostDown = iptables -t nat -D POSTROUTING -s $VPN_NET -o $iface -j MASQUERADE
 PostDown = iptables -D FORWARD -i $AWG_IFACE -j ACCEPT
 
-# Добавляйте пиров через AWG Bot или вручную:
-# [Peer]
-# PublicKey = <CLIENT_PUBLIC_KEY>
-# AllowedIPs = ${VPN_CLIENT_ADDR}/32
+# Пиры управляются через AWG Bot 2.0
 EOF
 
     chmod 600 "$AWG_CONF_DIR/${AWG_IFACE}.conf"
-
-    # Симлинк для совместимости с wg-quick
     mkdir -p /etc/wireguard
     ln -sf "$AWG_CONF_DIR/${AWG_IFACE}.conf" "/etc/wireguard/${AWG_IFACE}.conf"
-
-    # Сохраняем публичный ключ для финального вывода
-    echo "$public_key" > /tmp/awg_server_pubkey
-
-    success_msg "Конфигурация: $AWG_CONF_DIR/${AWG_IFACE}.conf"
-    echo ""
+    ok "Конфигурация создана"
 }
 
-# ── Установка AWG Bot 2.0 ─────────────────────────────────────────────────────
 install_awg_bot() {
-    section_header "[BOT] УСТАНОВКА AWG BOT 2.0"
+    section_header "УСТАНОВКА AWG BOT 2.0"
 
-    step_header "Установка Python 3.12"
-    local python_bin
-    if command -v python3.12 &>/dev/null; then
-        python_bin="python3.12"
-        success_msg "Python 3.12 уже установлен"
-    else
-        info_msg "Устанавливаем python3.12 через apt..."
-        if timeout 300 apt-get install -y python3.12 python3.12-venv python3.12-dev >> "$LOG_FILE" 2>&1; then
-            python_bin="python3.12"
-            success_msg "Python 3.12 установлен"
-        else
-            python_bin="python3"
-            warning_msg "Python 3.12 недоступен, используем $(python3 --version 2>&1)"
-        fi
-    fi
-
-    step_header "Клонирование репозитория бота"
-    local tmp_repo="/tmp/awg-bot2-repo"
-
-    rm -rf "$tmp_repo"
-    info_msg "Клонируется $BOT_REPO ..."
-    timeout 300 git clone --depth=1 "$BOT_REPO" "$tmp_repo" >> "$LOG_FILE" 2>&1 \
+    step_header "Клонирование репозитория"
+    local tmp="/tmp/awg-bot2-src"
+    rm -rf "$tmp"
+    info "Клонируется $BOT_REPO ..."
+    timeout 120 git clone --depth=1 "$BOT_REPO" "$tmp" >> "$LOG_FILE" 2>&1 \
         || die "Не удалось клонировать репозиторий бота"
-    success_msg "Репозиторий AWG_Bot2.0 получен"
+    ok "Репозиторий получен"
 
-    step_header "Установка файлов бота"
+    step_header "Установка файлов"
     rm -rf "$BOT_DIR"
-    mkdir -p "$BOT_DIR"
-    cp -r "$tmp_repo"/. "$BOT_DIR/"
-    success_msg "Файлы скопированы в $BOT_DIR"
+    cp -r "$tmp" "$BOT_DIR"
+    ok "Файлы скопированы в $BOT_DIR"
 
-    step_header "Установка Python-зависимостей"
-    info_msg "Создаём venv на $python_bin ..."
-    $python_bin -m venv "$BOT_DIR/.venv" >> "$LOG_FILE" 2>&1 \
+    step_header "Python venv + зависимости"
+    # Выбираем лучший доступный Python (3.10+ нужен для aiogram 3.x)
+    local py
+    for v in python3.12 python3.11 python3.10 python3; do
+        command -v "$v" &>/dev/null && { py="$v"; break; }
+    done
+    info "Python: $py ($(${py} --version 2>&1))"
+
+    "$py" -m venv "$BOT_DIR/.venv" >> "$LOG_FILE" 2>&1 \
         || die "Не удалось создать venv"
-    "$BOT_DIR/.venv/bin/pip" install --upgrade pip >> "$LOG_FILE" 2>&1
-    if [ -f "$BOT_DIR/requirements.txt" ]; then
-        "$BOT_DIR/.venv/bin/pip" install -r "$BOT_DIR/requirements.txt" >> "$LOG_FILE" 2>&1 \
-            || warning_msg "Часть зависимостей не установлена (см. лог)"
-        success_msg "Python-пакеты установлены"
-    else
-        warning_msg "requirements.txt не найден"
-    fi
+    "$BOT_DIR/.venv/bin/pip" install --upgrade pip -q >> "$LOG_FILE" 2>&1
+    "$BOT_DIR/.venv/bin/pip" install -r "$BOT_DIR/requirements.txt" -q >> "$LOG_FILE" 2>&1 \
+        && ok "Python-пакеты установлены" \
+        || warn "Часть пакетов не установлена — см. лог"
 
-    step_header "Настройка конфигурации бота (config.py)"
-    echo ""
-    print_color "$CYAN"   "  AWG_Bot2.0 требует следующие данные:"
-    print_color "$GRAY"   "  - Bot Token  : получить у @BotFather в Telegram"
-    print_color "$GRAY"   "  - Admin ID   : получить у @userinfobot в Telegram"
-    print_color "$GRAY"   "  - Server IP  : внешний IP этого сервера"
-    echo ""
+    step_header "Настройка config.py"
+    mkdir -p "$BOT_DIR/backups"
 
-    local bot_token admin_id server_ip awg_port
-
-    print_color "$YELLOW" "  Получите токен у @BotFather -> /newbot"
-    bot_token=$(ask_secret "Bot Token")
-    [ -n "$bot_token" ] || die "Bot Token не может быть пустым"
-
-    print_color "$YELLOW" "  Узнать свой ID: напишите @userinfobot -> /start"
-    admin_id=$(ask_input "Ваш Telegram ID (числовой)")
-    [ -n "$admin_id" ] || die "Telegram ID не может быть пустым"
-
-    # Пытаемся определить внешний IP автоматически
-    local detected_ip
-    detected_ip=$(curl -4 -fsSL ifconfig.me 2>/dev/null || curl -4 -fsSL api.ipify.org 2>/dev/null || echo "")
-    server_ip=$(ask_input "Внешний IP сервера" "$detected_ip")
-    [ -n "$server_ip" ] || die "IP сервера не может быть пустым"
-
-    awg_port=$(ask_input "Порт AmneziaWG" "$AWG_PORT")
-
-    # Записываем в config.py
-    cat > "$BOT_DIR/config.py" << EOF
-# AWG Bot 2.0 - конфигурация
-# Сгенерировано установщиком (авторы: svod011929, SXCVIO)
-
-bot_token: str = "$bot_token"
-admin_ids: list = [$admin_id]
-
-# Сервер
-server_ip: str = "$server_ip"
-server_port: int = $awg_port
-server_subnet: str = "$VPN_SUBNET"
-ipv6_enabled: bool = False
-
-# AmneziaWG
-awg_interface: str = "$AWG_IFACE"
-awg_config_dir: str = "$AWG_CONF_DIR"
-awg_config_file: str = "$AWG_CONF_DIR/${AWG_IFACE}.conf"
-
-# Пути
-database_path: str = "$BOT_DIR/clients.db"
-backup_dir: str = "$BOT_DIR/backups"
-EOF
+    # Патчим config.py — заменяем значения по умолчанию
+    sed -i "s|bot_token: str = \"BOT_TOKEN\"|bot_token: str = \"${BOT_TOKEN}\"|" \
+        "$BOT_DIR/config.py"
+    sed -i "s|self.admin_ids = \[12345678,123123133\]|self.admin_ids = [${ADMIN_ID}]|" \
+        "$BOT_DIR/config.py"
+    sed -i "s|server_ip: str = \"10.10.0.1\"|server_ip: str = \"${SERVER_IP}\"|" \
+        "$BOT_DIR/config.py"
+    sed -i "s|server_port: int = 52820|server_port: int = ${VPN_PORT}|" \
+        "$BOT_DIR/config.py"
+    sed -i "s|server_subnet: str = \"10.10.0.0/24\"|server_subnet: str = \"${VPN_NET}\"|" \
+        "$BOT_DIR/config.py"
+    sed -i "s|database_path: str = \"./clients.db\"|database_path: str = \"${BOT_DIR}/clients.db\"|" \
+        "$BOT_DIR/config.py"
+    sed -i "s|backup_dir: str = \"./backups\"|backup_dir: str = \"${BOT_DIR}/backups\"|" \
+        "$BOT_DIR/config.py"
+    sed -i "s|awg_config_dir: str = \"/etc/amnezia/amneziawg\"|awg_config_dir: str = \"${AWG_CONF_DIR}\"|" \
+        "$BOT_DIR/config.py"
 
     chmod 600 "$BOT_DIR/config.py"
-    mkdir -p "$BOT_DIR/backups"
-    success_msg "Конфигурация сохранена: $BOT_DIR/config.py"
-
-    echo ""
+    ok "config.py настроен"
 }
 
-# ── Systemd-сервисы ───────────────────────────────────────────────────────────
 create_services() {
-    section_header "[SVC]  SYSTEMD-СЕРВИСЫ"
+    section_header "SYSTEMD-СЕРВИСЫ"
 
-    step_header "Сервис awg-quick@"
+    step_header "awg-quick@.service"
     local awg_quick_bin
     awg_quick_bin=$(command -v awg-quick 2>/dev/null || echo "/usr/bin/awg-quick")
-    info_msg "awg-quick: $awg_quick_bin"
+    info "Бинарь: $awg_quick_bin"
 
     cat > /etc/systemd/system/awg-quick@.service << EOF
 [Unit]
@@ -531,26 +367,24 @@ ExecStop=${awg_quick_bin} down %i
 [Install]
 WantedBy=multi-user.target
 EOF
-    success_msg "awg-quick@.service создан ($awg_quick_bin)"
+    ok "awg-quick@.service создан"
 
-    step_header "Сервис awg-bot"
-
-    local python_bin="$BOT_DIR/.venv/bin/python3"
-    [ -x "$python_bin" ] || python_bin="/usr/bin/python3"
+    step_header "awg-bot.service"
+    local py_bin="$BOT_DIR/.venv/bin/python3"
+    [ -x "$py_bin" ] || py_bin=$(command -v python3)
 
     cat > /etc/systemd/system/awg-bot.service << EOF
 [Unit]
-Description=AWG Bot 2.0 (Telegram VPN Manager)
+Description=AWG Bot 2.0 - Telegram VPN Manager
 Documentation=https://github.com/JB-SelfCompany/AWG_Bot2.0
 After=network-online.target awg-quick@${AWG_IFACE}.service
 Wants=network-online.target
-Requires=awg-quick@${AWG_IFACE}.service
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=$BOT_DIR
-ExecStart=$python_bin $BOT_DIR/main.py
+WorkingDirectory=${BOT_DIR}
+ExecStart=${py_bin} ${BOT_DIR}/main.py
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -560,97 +394,82 @@ Environment=PYTHONUNBUFFERED=1
 [Install]
 WantedBy=multi-user.target
 EOF
-    success_msg "awg-bot.service создан"
-
+    ok "awg-bot.service создан"
     systemctl daemon-reload
-    success_msg "systemd перезагружен"
-
-    echo ""
+    ok "systemd перезагружен"
 }
 
-# ── Запуск сервисов ───────────────────────────────────────────────────────────
 start_services() {
-    section_header ">>> ЗАПУСК СЕРВИСОВ"
+    section_header "ЗАПУСК СЕРВИСОВ"
 
     step_header "Запуск AmneziaWG (${AWG_IFACE})"
     if systemctl start "awg-quick@${AWG_IFACE}" 2>>"$LOG_FILE"; then
-        success_msg "AmneziaWG запущен"
+        ok "AmneziaWG запущен"
     else
-        warning_msg "AmneziaWG не запустился - может потребоваться перезагрузка"
-        warning_msg "Проверьте: journalctl -u awg-quick@${AWG_IFACE} -n 30"
+        warn "AmneziaWG не запустился"
+        warn "Диагностика: journalctl -u awg-quick@${AWG_IFACE} -n 20"
     fi
 
     step_header "Запуск AWG Bot"
     if systemctl start awg-bot 2>>"$LOG_FILE"; then
-        success_msg "AWG Bot запущен"
+        ok "AWG Bot запущен"
     else
-        warning_msg "AWG Bot не запустился - проверьте конфигурацию"
-        warning_msg "Проверьте: journalctl -u awg-bot -n 30"
+        warn "AWG Bot не запустился"
+        warn "Диагностика: journalctl -u awg-bot -n 20"
     fi
 
-    step_header "Включение автозагрузки"
+    step_header "Автозагрузка"
     systemctl enable "awg-quick@${AWG_IFACE}" >> "$LOG_FILE" 2>&1
     systemctl enable awg-bot >> "$LOG_FILE" 2>&1
-    success_msg "Автозагрузка включена"
-
-    echo ""
+    ok "Автозагрузка включена"
 }
 
-# ── Итоговый вывод ────────────────────────────────────────────────────────────
 show_summary() {
-    local server_pubkey=""
-    [ -f /tmp/awg_server_pubkey ] && server_pubkey=$(cat /tmp/awg_server_pubkey)
-
-    local end_time duration
-    end_time=$(date +%s)
-    duration=$((end_time - SCRIPT_START_TIME))
-
-    echo ""
-    print_color "$GREEN" "╔════════════════════════════════════════════════════════════════╗"
-    print_color "$GREEN" "║              [OK]  УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА                  ║"
-    print_color "$GREEN" "╚════════════════════════════════════════════════════════════════╝"
-    echo ""
-
-    print_color "$CYAN" "[NET] AmneziaWG:"
-    print_color "$WHITE" "  - Интерфейс : $AWG_IFACE"
-    print_color "$WHITE" "  - Конфиг    : $AWG_CONF_DIR/${AWG_IFACE}.conf"
-    print_color "$WHITE" "  - Порт      : $AWG_PORT/UDP"
-    print_color "$WHITE" "  - Подсеть   : $VPN_SUBNET"
-    [ -n "$server_pubkey" ] && print_color "$WHITE" "  - Публ. ключ: $server_pubkey"
-    echo ""
-
-    print_color "$CYAN" "[BOT] AWG Bot 2.0:"
-    print_color "$WHITE" "  - Директория: $BOT_DIR"
-    print_color "$WHITE" "  - Конфиг    : $BOT_DIR/config.py"
-    print_color "$WHITE" "  - Логи      : journalctl -u awg-bot -f"
-    echo ""
-
-    print_color "$CYAN" "[CMD] Полезные команды:"
-    print_color "$GRAY"  "  systemctl status awg-bot"
-    print_color "$GRAY"  "  systemctl status awg-quick@${AWG_IFACE}"
-    print_color "$GRAY"  "  journalctl -u awg-bot -f"
-    print_color "$GRAY"  "  journalctl -u awg-quick@${AWG_IFACE} -n 50"
-    print_color "$GRAY"  "  nano $BOT_DIR/config.py"
-    echo ""
-
-    print_color "$YELLOW" "[TIME]  Время установки: $((duration/60))м $((duration%60))с"
-    print_color "$GRAY"   "[LOG] Полный лог: $LOG_FILE"
-    echo ""
-
+    local pub duration
+    pub=$(cat /tmp/awg_server_pubkey 2>/dev/null || echo "см.: awg show $AWG_IFACE")
+    duration=$(( $(date +%s) - SCRIPT_START_TIME ))
     rm -f /tmp/awg_server_pubkey
+
+    echo ""
+    pc "$GREEN" "╔════════════════════════════════════════════════════════════════╗"
+    pc "$GREEN" "║                  УСТАНОВКА ЗАВЕРШЕНА                          ║"
+    pc "$GREEN" "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    pc "$CYAN"  "  AmneziaWG:"
+    pc "$WHITE" "    Интерфейс  : $AWG_IFACE"
+    pc "$WHITE" "    Конфиг     : $AWG_CONF_DIR/${AWG_IFACE}.conf"
+    pc "$WHITE" "    Порт       : $VPN_PORT/UDP"
+    pc "$WHITE" "    Подсеть    : $VPN_NET"
+    pc "$WHITE" "    Public key : $pub"
+    echo ""
+    pc "$CYAN"  "  AWG Bot 2.0:"
+    pc "$WHITE" "    Директория : $BOT_DIR"
+    pc "$WHITE" "    Конфиг     : $BOT_DIR/config.py"
+    pc "$WHITE" "    Admin ID   : $ADMIN_ID"
+    pc "$WHITE" "    Server IP  : $SERVER_IP"
+    echo ""
+    pc "$CYAN"  "  Полезные команды:"
+    pc "$GRAY"  "    systemctl status awg-quick@${AWG_IFACE}"
+    pc "$GRAY"  "    systemctl status awg-bot"
+    pc "$GRAY"  "    journalctl -u awg-bot -f"
+    pc "$GRAY"  "    journalctl -u awg-quick@${AWG_IFACE} -n 50"
+    pc "$GRAY"  "    nano $BOT_DIR/config.py"
+    echo ""
+    pc "$YELLOW" "  Время установки : $((duration/60))м $((duration%60))с"
+    pc "$GRAY"   "  Лог             : $LOG_FILE"
+    echo ""
 }
 
-# ── Обработка прерывания ──────────────────────────────────────────────────────
-trap 'echo ""; error_msg "Установка прервана пользователем"; exit 130' INT TERM
+trap 'echo ""; fail "Прервано пользователем"; exit 130' INT TERM
 
-# ── Точка входа ───────────────────────────────────────────────────────────────
 main() {
     mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
     : > "$LOG_FILE"
-    log "=== AWG Bot Installer v$SCRIPT_VERSION START ==="
+    log "=== AWG Installer v$SCRIPT_VERSION START ==="
 
     show_banner
     check_requirements
+    collect_user_input
     confirm_installation
     install_dependencies
     install_amneziawg
@@ -661,7 +480,7 @@ main() {
     show_summary
 
     log "=== INSTALL COMPLETE ==="
-    print_color "$GREEN" "[OK] Готово! Перейдите в Telegram и запустите своего бота."
+    pc "$GREEN" "  Готово! Откройте Telegram и запустите бота."
     echo ""
 }
 
